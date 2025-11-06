@@ -20,6 +20,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 import warnings
 warnings.filterwarnings('ignore')
 
+RESULTS = "data/resultados.csv"
 # Set style
 sns.set_style("whitegrid")
 plt.rcParams['figure.figsize'] = (18, 14)
@@ -27,7 +28,7 @@ plt.rcParams['font.size'] = 10
 
 def load_data():
     """Load and prepare data"""
-    df = pd.read_csv('resultados.csv', encoding='latin1', decimal=',')
+    df = pd.read_csv(RESULTS, encoding='latin1', decimal=',')
     df.columns = df.columns.str.strip()
 
     numeric_cols = ['C2RCC', 'C2X', 'C2XC', 'Medicion']

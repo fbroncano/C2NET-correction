@@ -31,8 +31,8 @@ FONT_BASE = 18  # aumento del 30% para mejor legibilidad (14 -> 18)
 plt.rcParams['font.size'] = FONT_BASE
 plt.rcParams['axes.labelsize'] = FONT_BASE + 1
 plt.rcParams['axes.titlesize'] = FONT_BASE + 2
-plt.rcParams['xtick.labelsize'] = FONT_BASE
-plt.rcParams['ytick.labelsize'] = FONT_BASE
+plt.rcParams['xtick.labelsize'] = FONT_BASE - 2
+plt.rcParams['ytick.labelsize'] = FONT_BASE - 2
 plt.rcParams['legend.fontsize'] = FONT_BASE - 1
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.weight'] = 'normal'
@@ -536,32 +536,33 @@ def create_residual_analysis(y_test, y_pred_best, model_name, trophic_test):
     from scipy import stats
     
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+    plt.subplots_adjust(hspace=0.4, wspace=0.25, top=0.90)
     residuals = y_test - y_pred_best
     
     # Panel 1: Residuos vs Predichos
     colors = [TROPHIC_COLORS[state] for state in trophic_test]
     ax1.scatter(y_pred_best, residuals, alpha=0.6, c=colors, s=50, edgecolors='black', linewidth=0.5)
     ax1.axhline(y=0, color='red', linestyle='--', linewidth=2)
-    ax1.set_xlabel('Predicted values (mg/m³)', fontsize=10)
-    ax1.set_ylabel('Residuals (mg/m³)', fontsize=10)
-    ax1.set_title('(a) Residuals vs Predicted', fontsize=11, fontweight='bold')
+    ax1.set_xlabel('Predicted values (mg/m³)', fontsize=FONT_BASE-2)
+    ax1.set_ylabel('Residuals (mg/m³)', fontsize=FONT_BASE-2)
+    ax1.set_title('(a) Residuals vs Predicted', fontsize=FONT_BASE-2, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     
     # Panel 2: Q-Q plot
     stats.probplot(residuals, dist="norm", plot=ax2)
-    ax2.set_title('(b) Q-Q Plot', fontsize=11, fontweight='bold')
-    ax2.set_xlabel('Theoretical Quantiles', fontsize=10)
-    ax2.set_ylabel('Sample Quantiles', fontsize=10)
+    ax2.set_title('(b) Q-Q Plot', fontsize=FONT_BASE-2, fontweight='bold')
+    ax2.set_xlabel('Theoretical Quantiles', fontsize=FONT_BASE-2)
+    ax2.set_ylabel('Sample Quantiles', fontsize=FONT_BASE-2)
     ax2.grid(True, alpha=0.3)
     
     # Panel 3: Histograma de residuos
     _, p_value = stats.shapiro(residuals)
     ax3.hist(residuals, bins=20, edgecolor='black', alpha=0.7, color='steelblue')
     ax3.axvline(x=0, color='red', linestyle='--', linewidth=2)
-    ax3.set_xlabel('Residuals (mg/m³)', fontsize=10)
-    ax3.set_ylabel('Frequency', fontsize=10)
-    ax3.set_title(f'(c) Residuals Distribution (Shapiro-Wilk p={p_value:.3f})', 
-                 fontsize=11, fontweight='bold')
+    ax3.set_xlabel('Residuals (mg/m³)', fontsize=FONT_BASE-2)
+    ax3.set_ylabel('Frequency', fontsize=FONT_BASE-2)
+    ax3.set_title(f'(c) Residuals Distribution \n(Shapiro-Wilk p={p_value:.3f})', 
+                 fontsize=FONT_BASE-2, fontweight='bold')
     ax3.grid(True, alpha=0.3, axis='y')
     
     # Panel 4: Box plot por estado trófico
@@ -576,12 +577,18 @@ def create_residual_analysis(y_test, y_pred_best, model_name, trophic_test):
         patch.set_alpha(0.5)
     
     ax4.axhline(y=0, color='red', linestyle='--', linewidth=2)
-    ax4.set_ylabel('Residuals (mg/m³)', fontsize=10)
-    ax4.set_xlabel('Trophic State', fontsize=10)
-    ax4.set_title('(d) Residuals by Trophic State', fontsize=11, fontweight='bold')
+    ax4.set_ylabel('Residuals (mg/m³)', fontsize=FONT_BASE-2)
+    ax4.set_xlabel('Trophic State', fontsize=FONT_BASE-2)
+    ax4.set_title('(d) Residuals by Trophic State', fontsize=FONT_BASE-2, fontweight='bold')
     ax4.grid(True, alpha=0.3, axis='y')
     
-    plt.suptitle(f'Residual Analysis - {model_name}', fontsize=13, fontweight='bold', y=1.02)
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='red', linestyle='--', linewidth=1, label='C2RCC baseline')
+    ]
+    fig.legend(handles=legend_elements, loc='lower center', ncol=4, fontsize=FONT_BASE -2, bbox_to_anchor=(0.5, -0.05))
+
+    plt.suptitle(f'Residual Analysis - {model_name}', fontsize=FONT_BASE+5, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.savefig('figures/fig4_residual_analysis.png', dpi=300, bbox_inches='tight')
     plt.savefig('figures/fig4_residual_analysis.pdf', dpi=300, bbox_inches='tight')
