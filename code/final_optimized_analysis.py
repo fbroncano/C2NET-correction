@@ -23,7 +23,7 @@ from sklearn.svm import SVR
 from sklearn.neural_network import MLPRegressor
 from sklearn.model_selection import cross_val_score, KFold, LeaveOneGroupOut
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
 from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
@@ -37,7 +37,7 @@ plt.rcParams['font.size'] = 10
 def load_data():
     """Load and prepare data from resultados.csv"""
     print("Loading data...")
-    df = pd.read_csv('resultados.csv', encoding='latin1', decimal=',')
+    df = pd.read_csv('data/resultados.csv', encoding='latin1', decimal=',')
     df.columns = df.columns.str.strip()
 
     # Convert numeric columns
@@ -336,11 +336,14 @@ def train_final_model(df):
     models = get_models()
     results = {}
 
-    print(f"\n{'Model':<20} {'RMSE':<10} {'MAE':<10} {'R²':<10} {'Improvement':<12}")
-    print(f"{'-'*65}")
+    print(f"\n{'Model':<20} {'RMSE':<10} {'MAE':<10} {'R²':<10} {'MAPE':<5} {'Improvement':<12}")
+    print(f"{'-'*70}")
 
     # Baseline: C2RCC performance
     baseline_rmse = np.sqrt(mean_squared_error(test_df['Medicion'], test_df['C2RCC']))
+    baseline_mae = mean_absolute_error(test_df['Medicion'], test_df['C2RCC'])
+    baseline_r2 = r2_score(test_df['Medicion'], test_df['C2RCC'])
+    baseline_mape = mean_absolute_percentage_error(test_df['Medicion'], test_df['C2RCC'])
 
     for model_name, model in models.items():
         model.fit(X_train_scaled, y_train)
@@ -349,6 +352,7 @@ def train_final_model(df):
         rmse = np.sqrt(mean_squared_error(y_test, y_pred))
         mae = mean_absolute_error(y_test, y_pred)
         r2 = r2_score(y_test, y_pred)
+        mape = mean_absolute_percentage_error(y_test, y_pred)
         improvement = ((baseline_rmse - rmse) / baseline_rmse) * 100
 
         results[model_name] = {
@@ -358,10 +362,13 @@ def train_final_model(df):
             'rmse': rmse,
             'mae': mae,
             'r2': r2,
+            'mape': mape,
             'improvement': improvement
         }
 
-        print(f"{model_name:<20} {rmse:<10.2f} {mae:<10.2f} {r2:<10.3f} {improvement:>10.1f}%")
+        print(f"{model_name:<20} {rmse:<10.2f} {mae:<10.2f} {r2:<10.3f} {mape:<3.1f}% {improvement:>10.1f}%") 
+
+    print(f"{'C2RCC':<20} {baseline_rmse:<10.2f} {baseline_mae:<10.2f} {baseline_r2:<10.3f} {baseline_mape:<3.1f}% -") 
 
     # Feature importance analysis
     print(f"\n{'='*60}")

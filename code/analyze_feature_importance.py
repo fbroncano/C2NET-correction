@@ -40,7 +40,7 @@ def load_data():
             df['C2XC'].notna() & df['Medicion'].notna())
 
     df_clean = df[mask].copy()
-
+    
     # Add trophic state
     reservoir_means = df_clean.groupby('Embalse')['Medicion'].mean()
     trophic_map = {}
@@ -307,6 +307,7 @@ def compare_approaches(df):
         np.arange(len(df)), test_size=0.3, random_state=42
     )[0]]
 
+    print(train_indices)
     # Approach 1: Original 16 features (no rescaling)
     X_orig, names_orig = create_original_features(df)
     results_orig = analyze_feature_importance(
