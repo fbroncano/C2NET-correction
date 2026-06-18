@@ -12,11 +12,8 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split, LeaveOneGroupOut
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.ensemble import RandomForestRegressor, StackingRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, StackingRegressor
 from sklearn.linear_model import Ridge, Lasso, ElasticNet, HuberRegressor, LinearRegression
-from sklearn.svm import SVR
-from sklearn.neural_network import MLPRegressor
-
 try:
     import xgboost as xgb
     ENABLE_XGB = False  # forzar desactivación para evitar incompatibilidades
@@ -26,16 +23,13 @@ except Exception:
 import warnings
 warnings.filterwarnings('ignore')
 
-# Datos
-RESULTADOS = "data/resultados.csv"
-
 # Configuración para publicación (ajustes de legibilidad)
 FONT_BASE = 18  # aumento del 30% para mejor legibilidad (14 -> 18)
 plt.rcParams['font.size'] = FONT_BASE
 plt.rcParams['axes.labelsize'] = FONT_BASE + 1
 plt.rcParams['axes.titlesize'] = FONT_BASE + 2
-plt.rcParams['xtick.labelsize'] = FONT_BASE - 2
-plt.rcParams['ytick.labelsize'] = FONT_BASE - 2
+plt.rcParams['xtick.labelsize'] = FONT_BASE
+plt.rcParams['ytick.labelsize'] = FONT_BASE
 plt.rcParams['legend.fontsize'] = FONT_BASE - 1
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.weight'] = 'normal'
@@ -48,66 +42,28 @@ plt.rcParams['savefig.pad_inches'] = 0.15
 FLIP_WIDE_LAYOUTS = True
 
 # Colores para estados tróficos
-# TROPHIC_COLORS = {'Mesotrophic': '#2E7D32', 'Eutrophic': '#F57C00', 'Hypertrophic': '#C62828'}
-TROPHIC_COLORS = {'Mesotrophic': '#a8dcd9', 'Eutrophic': '#7dd8ad', 'Hypertrophic': '#14854f'}
+TROPHIC_COLORS = {'Mesotrophic': '#2E7D32', 'Eutrophic': '#F57C00', 'Hypertrophic': '#C62828'}
 
 # ==============================================================================
 # FUNCIONES AUXILIARES
 # ==============================================================================
 
-def load_and_prepare_data(filepath=RESULTADOS):
+def load_and_prepare_data(filepath='resultados.csv'):
     """Carga y prepara los datos"""
     df = pd.read_csv(filepath)
-    df.columns = df.columns.str.strip()
-
-    # Convert numeric columns
-    numeric_cols = ['C2RCC', 'C2X', 'C2XC', 'Medicion']
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    # Select valid samples
-    mask = (df['C2RCC'].notna() & df['C2X'].notna() &
-            df['C2XC'].notna() & df['Medicion'].notna())
-    df_clean = df[mask].copy()
-
-    # Add trophic state classification by reservoir average
-    reservoir_means = df_clean.groupby('Embalse')['Medicion'].mean()
-    trophic_map = {}
-    for reservoir, mean_chl in reservoir_means.items():
-        if mean_chl <= 25:
-            trophic_map[reservoir] = 'Mesotrophic'
-        elif mean_chl <= 75:
-            trophic_map[reservoir] = 'Eutrophic'
-        else:
-            trophic_map[reservoir] = 'Hypertrophic'
-
-    df_clean['Estado_Trofico'] = df_clean['Embalse'].map(trophic_map)
-
-    # Apply rescaling
-    c2x_r = df['C2X'] * 0.048169 + 12.19
-    c2xc_r = df['C2XC'] * 0.029456 + 6.27
-
-    # Base (3)
-    df_clean['C2RCC'] = df['C2RCC']
-    df_clean['C2X_r'] = c2x_r
-    df_clean['C2XC_r'] = c2xc_r
-
-    # Statistics (2)
-    df_clean['Mean_r'] = pd.DataFrame({'C2RCC': df['C2RCC'], 'C2X_r': c2x_r, 'C2XC_r': c2xc_r}).mean(axis=1)
-    df_clean['Median_r'] = pd.DataFrame({'C2RCC': df['C2RCC'], 'C2X_r': c2x_r, 'C2XC_r': c2xc_r}).median(axis=1)
-
-    # Interactions (2) - MOST IMPORTANT
-    df_clean['C2X_r*C2RCC'] = c2x_r * df['C2RCC'] / 100
-    df_clean['C2XC_r*C2RCC'] = c2xc_r * df['C2RCC'] / 100
-
-    # Transformations (2)
-    df_clean['C2RCC_sq'] = df['C2RCC'] ** 2
-    df_clean['sqrt_C2RCC'] = np.sqrt(np.abs(df['C2RCC']))
-
-    # Ratio (1)
-    df_clean['C2XC_r/C2RCC'] = c2xc_r / (df['C2RCC'] + 1e-5)
-
+    df_clean = df.dropna(subset=['C2RCC', 'C2X', 'C2XC', 'Medicion'])
+    
+    # Clasificación por estado trófico
+    df_clean['Estado_Trofico'] = pd.cut(df_clean['Medicion'], 
+                                         bins=[0, 25, 75, np.inf],
+                                         labels=['Mesotrophic', 'Eutrophic', 'Hypertrophic'])
+    
+    # Añadir características derivadas
+    df_clean['log_C2X'] = np.log1p(df_clean['C2X'])
+    df_clean['log_C2XC'] = np.log1p(df_clean['C2XC'])
+    df_clean['C2X_C2RCC_ratio'] = df_clean['C2X'] / (df_clean['C2RCC'] + 1e-5)
+    df_clean['C2XC_C2RCC_ratio'] = df_clean['C2XC'] / (df_clean['C2RCC'] + 1e-5)
+    
     return df_clean
 
 def train_all_models(X_train, X_test, y_train, y_test):
@@ -130,16 +86,6 @@ def train_all_models(X_train, X_test, y_train, y_test):
         'ElasticNet': ElasticNet(alpha=0.1, l1_ratio=0.5),
         'Huber': HuberRegressor(epsilon=1.35),
         'Random Forest': RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
-    }
-    models = {
-        'ElasticNet': ElasticNet(alpha=0.1, l1_ratio=0.5, max_iter=2000, random_state=42),
-        'Ridge': Ridge(alpha=1.0, random_state=42),
-        'Lasso': Lasso(alpha=0.1, max_iter=2000, random_state=42),
-        'Huber': HuberRegressor(epsilon=1.35, max_iter=200),
-        'Random Forest': RandomForestRegressor(n_estimators=200, max_depth=15, random_state=42),
-        'Gradient Boosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
-        'SVR': SVR(kernel='rbf', C=10, gamma='scale'),
-        'MLP': MLPRegressor(hidden_layer_sizes=(50, 25), max_iter=1000, random_state=42, early_stopping=True),
     }
     if ENABLE_XGB:
         models['XGBoost'] = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42, verbosity=0)
@@ -176,29 +122,29 @@ def train_all_models(X_train, X_test, y_train, y_test):
     ]
     if ENABLE_XGB:
         base_estimators.insert(1, ('xgb', xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42, verbosity=0)))
-    # stacking = StackingRegressor(
-    #     estimators=base_estimators,
-    #     final_estimator=RandomForestRegressor(n_estimators=100, random_state=42),
-    #     cv=5
-    # )
-    # stacking.fit(X_train_scaled, y_train)
-    # y_pred_stack = stacking.predict(X_test_scaled)
+    stacking = StackingRegressor(
+        estimators=base_estimators,
+        final_estimator=RandomForestRegressor(n_estimators=100, random_state=42),
+        cv=5
+    )
+    stacking.fit(X_train_scaled, y_train)
+    y_pred_stack = stacking.predict(X_test_scaled)
     
-    # # Calcular métricas para el modelo stacking
-    # rmse_stack = np.sqrt(mean_squared_error(y_test, y_pred_stack))
-    # mae_stack = mean_absolute_error(y_test, y_pred_stack)
-    # r2_stack = r2_score(y_test, y_pred_stack)
-    # mape_stack = np.mean(np.abs((y_test - y_pred_stack) / np.maximum(y_test, 1e-6))) * 100
+    # Calcular métricas para el modelo stacking
+    rmse_stack = np.sqrt(mean_squared_error(y_test, y_pred_stack))
+    mae_stack = mean_absolute_error(y_test, y_pred_stack)
+    r2_stack = r2_score(y_test, y_pred_stack)
+    mape_stack = np.mean(np.abs((y_test - y_pred_stack) / np.maximum(y_test, 1e-6))) * 100
     
-    # metrics = {
-    #     'Model': 'Stacking Ensemble',
-    #     'RMSE': rmse_stack,
-    #     'MAE': mae_stack,
-    #     'R2': r2_stack,
-    #     'MAPE': mape_stack
-    # }
-    # results.append(metrics)
-    # models_dict['Stacking Ensemble'] = (stacking, y_pred_stack)
+    metrics = {
+        'Model': 'Stacking Ensemble',
+        'RMSE': rmse_stack,
+        'MAE': mae_stack,
+        'R2': r2_stack,
+        'MAPE': mape_stack
+    }
+    results.append(metrics)
+    models_dict['Stacking Ensemble'] = (stacking, y_pred_stack)
     
     return pd.DataFrame(results), models_dict
 
@@ -257,13 +203,13 @@ def create_model_comparison(results_df, baseline=None):
         2, 2, figsize=(16, 12), sharey='row'
     )
     # Ajustar espaciado manualmente para evitar solapes
-    plt.subplots_adjust(hspace=0.3, wspace=0.15, top=0.90)
+    plt.subplots_adjust(hspace=0.3, wspace=0.25, top=0.90)
     
     # Colores basados en desempeño
     def get_performance_color(rmse):
-        if rmse < 38:
+        if rmse < 30:
             return '#2E7D32'  # Verde - Excelente
-        elif rmse < 45:
+        elif rmse < 50:
             return '#F57C00'  # Naranja - Bueno
         else:
             return '#C62828'  # Rojo - Pobre
@@ -277,7 +223,7 @@ def create_model_comparison(results_df, baseline=None):
     # Añadir valores en las barras con fuente más grande
     for i, (bar, rmse) in enumerate(zip(bars1, results_sorted['RMSE'])):
         ax1.text(bar.get_width() + max(results_sorted['RMSE']) * 0.02, bar.get_y() + bar.get_height()/2, 
-                f'{rmse:.1f}', ha='left', va='center', fontsize=12)
+                f'{rmse:.1f}', ha='left', va='center', fontsize=13, fontweight='bold')
     
     ax1.set_yticks(y_pos)
     # Sustituimos etiquetas de eje Y por texto dentro de las barras (mejor visibilidad)
@@ -293,13 +239,13 @@ def create_model_comparison(results_df, baseline=None):
     # Añadir valores en las barras con fuente más grande
     for i, (bar, mae) in enumerate(zip(bars2, results_sorted['MAE'])):
         ax2.text(bar.get_width() + max(results_sorted['MAE']) * 0.02, bar.get_y() + bar.get_height()/2, 
-                f'{mae:.1f}', ha='left', va='center', fontsize=12)
+                f'{mae:.1f}', ha='left', va='center', fontsize=13, fontweight='bold')
     
     # Asegurar que no mostramos etiquetas del eje Y (iremos con texto en barras)
-    ax1.tick_params(labelleft=False, labelsize=12)
+    ax1.tick_params(labelleft=False)
     ax2.sharey(ax1)
     ax2.set_yticks(y_pos)
-    ax2.tick_params(labelleft=False, labelsize=12)
+    ax2.tick_params(labelleft=False)
     ax2.set_yticklabels([])
     ax2.set_xlabel('MAE (mg/m³)', fontsize=FONT_BASE, fontweight='bold')
     ax2.set_title('(b) Mean Absolute Error', fontsize=FONT_BASE + 1, fontweight='bold')
@@ -317,12 +263,12 @@ def create_model_comparison(results_df, baseline=None):
     # Añadir valores en las barras con fuente más grande
     for i, (bar, r2) in enumerate(zip(bars3, valid_r2['R2'])):
         ax3.text(bar.get_width() + 0.02, bar.get_y() + bar.get_height()/2, 
-                f'{r2:.3f}', ha='left', va='center', fontsize=12)
+                f'{r2:.3f}', ha='left', va='center', fontsize=13, fontweight='bold')
     
     ax3.set_yticks(y_pos_r2)
     # Ocultamos etiquetas de eje Y; pondremos texto dentro de barras
     ax3.set_yticklabels([])
-    ax3.tick_params(labelleft=False, labelsize=12)
+    ax3.tick_params(labelleft=False)
     ax3.set_xlabel('R²', fontsize=FONT_BASE, fontweight='bold')
     ax3.set_title('(c) Coefficient of Determination (R²)', fontsize=FONT_BASE + 1, fontweight='bold')
     ax3.grid(True, alpha=0.3, axis='x')
@@ -340,12 +286,12 @@ def create_model_comparison(results_df, baseline=None):
     for i, (bar, mape) in enumerate(zip(bars4, valid_r2['MAPE'])):
         ax4.text(bar.get_width() + max(valid_r2['MAPE']) * 0.02, 
                 bar.get_y() + bar.get_height()/2, 
-                f'{mape:.0f}%', ha='left', va='center', fontsize=12, color='black')
+                f'{mape:.0f}%', ha='left', va='center', fontsize=13, fontweight='bold')
     
     # Asegurar etiquetas del eje Y solo en el subplot izquierdo
     ax4.sharey(ax3)
     ax4.set_yticks(y_pos_r2)
-    ax4.tick_params(labelleft=False, labelsize=12)
+    ax4.tick_params(labelleft=False)
     ax4.set_yticklabels([])
     ax4.set_xlabel('MAPE (%)', fontsize=FONT_BASE, fontweight='bold')
     ax4.set_title('(d) Mean Absolute Percentage Error', fontsize=FONT_BASE + 1, fontweight='bold')
@@ -354,16 +300,13 @@ def create_model_comparison(results_df, baseline=None):
     
     # Añadir leyenda de colores
     from matplotlib.patches import Patch
-    from matplotlib.lines import Line2D
     legend_elements = [
-        Patch(facecolor='#2E7D32', label='Excellent (RMSE < 38)'),
-        Patch(facecolor='#F57C00', label='Good (38-45)'),
-        Patch(facecolor='#C62828', label='Poor (> 45)'),
-        Line2D([0], [0], color='red', linestyle='--', linewidth=2, label='C2RCC baseline')
+        Patch(facecolor='#2E7D32', label='Excellent (RMSE < 30)'),
+        Patch(facecolor='#F57C00', label='Good (30-50)'),
+        Patch(facecolor='#C62828', label='Poor (> 50)')
     ]
-    # plt.legend(handles=legend_elements, loc='lower right', fontsize=FONT_BASE - 4)
-    fig.legend(handles=legend_elements, loc='lower center', ncol=4, fontsize=FONT_BASE -2, bbox_to_anchor=(0.5, 0))
-
+    ax4.legend(handles=legend_elements, loc='lower right', fontsize=FONT_BASE - 1)
+    
     # Configurar título general con más espacio para evitar superposición
     # Si hay baseline, añadir líneas verticales de referencia por métrica
     if isinstance(baseline, dict):
@@ -385,17 +328,17 @@ def create_model_comparison(results_df, baseline=None):
             if 'MAPE' in baseline:
                 ax4.axvline(x=float(baseline['MAPE']), color='red', linestyle='--', linewidth=2)
             # leyenda sólo en el primer panel
-            #fig.legend(loc='lower right', fontsize=FONT_BASE - 2)
+            ax1.legend(loc='lower right', fontsize=FONT_BASE - 2)
         except Exception:
             pass
 
     # Título principal elevado (hacia arriba) para evitar cualquier solape con la primera fila
-    # fig.suptitle(
-    #     'Comprehensive Model Performance Comparison\n(All Models with Complete Metrics)',
-    #     fontsize=FONT_BASE + 3,
-    #     fontweight='bold',
-    #     y=1.02,
-    # )
+    fig.suptitle(
+        'Comprehensive Model Performance Comparison\n(All Models with Complete Metrics)',
+        fontsize=FONT_BASE + 3,
+        fontweight='bold',
+        y=1.02,
+    )
 
     # Añadir etiquetas de nombre de modelo dentro de las barras (texto blanco)
     max_rmse = float(results_sorted['RMSE'].max()) if len(results_sorted) else 1.0
@@ -405,10 +348,10 @@ def create_model_comparison(results_df, baseline=None):
         y = bar.get_y() + bar.get_height()/2
         if width > inset_rmse * 1.5:
             x = max(0.0, width - inset_rmse)
-            ax1.text(x, y, str(name), va='center', ha='right', color='black', fontsize=12)
+            ax1.text(x, y, str(name), va='center', ha='right', color='white', fontsize=12, fontweight='bold')
         else:
             x = width + inset_rmse
-            ax1.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12)
+            ax1.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12, fontweight='bold')
 
     # Etiquetas dentro de las barras para R² (maneja positivos y negativos)
     if len(valid_r2):
@@ -425,18 +368,18 @@ def create_model_comparison(results_df, baseline=None):
                 # barra hacia la derecha desde 0
                 if width > inset_r2 * 1.5:
                     x = x_left + width - inset_r2
-                    ax3.text(x, y, str(name), va='center', ha='right', color='black', fontsize=12)
+                    ax3.text(x, y, str(name), va='center', ha='right', color='white', fontsize=12, fontweight='bold')
                 else:
                     x = x_left + width + inset_r2
-                    ax3.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12)
+                    ax3.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12, fontweight='bold')
             else:
                 # barra hacia la izquierda (width negativo)
                 if abs(width) > inset_r2 * 1.5:
                     x = x_left + inset_r2
-                    ax3.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12)
+                    ax3.text(x, y, str(name), va='center', ha='left', color='white', fontsize=12, fontweight='bold')
                 else:
                     x = x_left - inset_r2
-                    ax3.text(x, y, str(name), va='center', ha='right', color='black', fontsize=12)
+                    ax3.text(x, y, str(name), va='center', ha='right', color='black', fontsize=12, fontweight='bold')
 
     # Etiquetas dentro de las barras para MAE
     max_mae = float(results_sorted['MAE'].max()) if len(results_sorted) else 1.0
@@ -446,10 +389,10 @@ def create_model_comparison(results_df, baseline=None):
         y = bar.get_y() + bar.get_height()/2
         if width > inset_mae * 1.5:
             x = max(0.0, width - inset_mae)
-            ax2.text(x, y, str(name), va='center', ha='right', color='black', fontsize=12)
+            ax2.text(x, y, str(name), va='center', ha='right', color='white', fontsize=12, fontweight='bold')
         else:
             x = width + inset_mae
-            ax2.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12)
+            ax2.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12, fontweight='bold')
 
     # Etiquetas dentro de las barras para MAPE
     if len(valid_r2):
@@ -460,10 +403,10 @@ def create_model_comparison(results_df, baseline=None):
             y = bar.get_y() + bar.get_height()/2
             if width > inset_mape * 1.5:
                 x = max(0.0, width - inset_mape)
-                ax4.text(x, y, str(name), va='center', ha='right', color='black', fontsize=12)
+                ax4.text(x, y, str(name), va='center', ha='right', color='white', fontsize=12, fontweight='bold')
             else:
                 x = width + inset_mape
-                ax4.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12)
+                ax4.text(x, y, str(name), va='center', ha='left', color='black', fontsize=12, fontweight='bold')
 
     # Guardar figura
     plt.savefig('figures/fig2_model_comparison.png', dpi=300, bbox_inches='tight')
@@ -479,8 +422,8 @@ def create_prediction_scatter(y_test, models_dict, trophic_test):
     """Crea scatter plots para los mejores modelos, sin subplots vacíos,
     compartiendo ejes Y por fila y ejes X por columna, y ampliando ligeramente el tamaño."""
 
-    # Seleccionar los 3 mejores modelos en orden deseado, filtrar por los disponibles
-    preferred = ['MLP', 'Random Forest', 'ElasticNet']
+    # Seleccionar los 6 mejores modelos en orden deseado, filtrar por los disponibles
+    preferred = ['Ridge (α=0.1)', 'ElasticNet', 'Random Forest', 'XGBoost', 'Stacking Ensemble', 'Linear Regression']
     available_models = [m for m in preferred if m in models_dict]
     n = len(available_models)
     if n == 0:
@@ -491,11 +434,11 @@ def create_prediction_scatter(y_test, models_dict, trophic_test):
 
     # Definir rejilla según orientación
     if FLIP_WIDE_LAYOUTS:
-        cols = 3
+        cols = 2
         rows = int(np.ceil(n / cols))
-        figsize = (21, 7)  # ligeramente mayor
+        figsize = (13, 17)  # ligeramente mayor
     else:
-        rows = 3
+        rows = 2
         cols = int(np.ceil(n / rows))
         figsize = (18, 11)  # ligeramente mayor
 
@@ -527,10 +470,9 @@ def create_prediction_scatter(y_test, models_dict, trophic_test):
 
         rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
         r2 = float(r2_score(y_test, y_pred))
-        ax.set_title(f'{model_name}\nRMSE={rmse:.1f}, R²={r2:.3f}', fontsize=FONT_BASE+2, fontweight="bold")
-
+        ax.set_title(f'{model_name}\nRMSE={rmse:.1f}, R²={r2:.3f}', fontsize=FONT_BASE + 1, fontweight='bold')
         ax.grid(True, alpha=0.3)
-    
+
         # Sin etiquetas por-eje: usaremos etiquetas comunes por fila/columna
         ax.set_xlabel('')
         ax.set_ylabel('')
@@ -538,7 +480,7 @@ def create_prediction_scatter(y_test, models_dict, trophic_test):
         if idx == 0:
             from matplotlib.patches import Patch
             legend_elements = [Patch(facecolor=TROPHIC_COLORS[key], label=key) for key in TROPHIC_COLORS.keys()]
-            fig.legend(handles=legend_elements, loc='lower center', fontsize=FONT_BASE + 4,  bbox_to_anchor=(0.5, -0.1), ncol=3)
+            ax.legend(handles=legend_elements, loc='upper left', fontsize=FONT_BASE - 2)
 
     # Ajustar límites compartidos por columna (x) y fila (y)
     for c in range(cols):
@@ -563,15 +505,15 @@ def create_prediction_scatter(y_test, models_dict, trophic_test):
 
     # Etiquetas comunes para toda la figura (por columna/fila)
     try:
-        fig.supxlabel('Observed Chl-a (mg/m³)', fontsize=FONT_BASE)
-        fig.supylabel('Predicted Chl-a (mg/m³)', fontsize=FONT_BASE)
+        fig.supxlabel('Observed Chl-a (mg/m³)', fontsize=FONT_BASE + 1)
+        fig.supylabel('Predicted Chl-a (mg/m³)', fontsize=FONT_BASE + 1)
     except Exception:
         # Compatibilidad con versiones antiguas de matplotlib
-        fig.text(0.5, 0.02, 'Observed Chl-a (mg/m³)', ha='center', va='center', fontsize=FONT_BASE+2)
-        fig.text(0.02, 0.5, 'Predicted Chl-a (mg/m³)', ha='center', va='center', rotation='vertical', fontsize=FONT_BASE+2)
+        fig.text(0.5, 0.02, 'Observed Chl-a (mg/m³)', ha='center', va='center', fontsize=FONT_BASE + 1)
+        fig.text(0.02, 0.5, 'Predicted Chl-a (mg/m³)', ha='center', va='center', rotation='vertical', fontsize=FONT_BASE + 1)
     
-    #plt.suptitle('Observed vs Predicted Chlorophyll-a Concentrations', 
-    #            fontsize=FONT_BASE + 3, fontweight='bold', y=1.02)
+    plt.suptitle('Observed vs Predicted Chlorophyll-a Concentrations', 
+                fontsize=FONT_BASE + 3, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.savefig('figures/fig3_scatter_plots.png', dpi=300, bbox_inches='tight')
     plt.savefig('figures/fig3_scatter_plots.pdf', dpi=300, bbox_inches='tight')
@@ -587,33 +529,32 @@ def create_residual_analysis(y_test, y_pred_best, model_name, trophic_test):
     from scipy import stats
     
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
-    plt.subplots_adjust(hspace=0.4, wspace=0.25, top=0.90)
     residuals = y_test - y_pred_best
     
     # Panel 1: Residuos vs Predichos
     colors = [TROPHIC_COLORS[state] for state in trophic_test]
     ax1.scatter(y_pred_best, residuals, alpha=0.6, c=colors, s=50, edgecolors='black', linewidth=0.5)
     ax1.axhline(y=0, color='red', linestyle='--', linewidth=2)
-    ax1.set_xlabel('Predicted values (mg/m³)', fontsize=FONT_BASE-2)
-    ax1.set_ylabel('Residuals (mg/m³)', fontsize=FONT_BASE-2)
-    ax1.set_title('(a) Residuals vs Predicted', fontsize=FONT_BASE-2, fontweight='bold')
+    ax1.set_xlabel('Predicted values (mg/m³)', fontsize=10)
+    ax1.set_ylabel('Residuals (mg/m³)', fontsize=10)
+    ax1.set_title('(a) Residuals vs Predicted', fontsize=11, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     
     # Panel 2: Q-Q plot
     stats.probplot(residuals, dist="norm", plot=ax2)
-    ax2.set_title('(b) Q-Q Plot', fontsize=FONT_BASE-2, fontweight='bold')
-    ax2.set_xlabel('Theoretical Quantiles', fontsize=FONT_BASE-2)
-    ax2.set_ylabel('Sample Quantiles', fontsize=FONT_BASE-2)
+    ax2.set_title('(b) Q-Q Plot', fontsize=11, fontweight='bold')
+    ax2.set_xlabel('Theoretical Quantiles', fontsize=10)
+    ax2.set_ylabel('Sample Quantiles', fontsize=10)
     ax2.grid(True, alpha=0.3)
     
     # Panel 3: Histograma de residuos
     _, p_value = stats.shapiro(residuals)
     ax3.hist(residuals, bins=20, edgecolor='black', alpha=0.7, color='steelblue')
     ax3.axvline(x=0, color='red', linestyle='--', linewidth=2)
-    ax3.set_xlabel('Residuals (mg/m³)', fontsize=FONT_BASE-2)
-    ax3.set_ylabel('Frequency', fontsize=FONT_BASE-2)
-    ax3.set_title(f'(c) Residuals Distribution \n(Shapiro-Wilk p={p_value:.3f})', 
-                 fontsize=FONT_BASE-2, fontweight='bold')
+    ax3.set_xlabel('Residuals (mg/m³)', fontsize=10)
+    ax3.set_ylabel('Frequency', fontsize=10)
+    ax3.set_title(f'(c) Residuals Distribution (Shapiro-Wilk p={p_value:.3f})', 
+                 fontsize=11, fontweight='bold')
     ax3.grid(True, alpha=0.3, axis='y')
     
     # Panel 4: Box plot por estado trófico
@@ -628,18 +569,12 @@ def create_residual_analysis(y_test, y_pred_best, model_name, trophic_test):
         patch.set_alpha(0.5)
     
     ax4.axhline(y=0, color='red', linestyle='--', linewidth=2)
-    ax4.set_ylabel('Residuals (mg/m³)', fontsize=FONT_BASE-2)
-    ax4.set_xlabel('Trophic State', fontsize=FONT_BASE-2)
-    ax4.set_title('(d) Residuals by Trophic State', fontsize=FONT_BASE-2, fontweight='bold')
+    ax4.set_ylabel('Residuals (mg/m³)', fontsize=10)
+    ax4.set_xlabel('Trophic State', fontsize=10)
+    ax4.set_title('(d) Residuals by Trophic State', fontsize=11, fontweight='bold')
     ax4.grid(True, alpha=0.3, axis='y')
     
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], color='red', linestyle='--', linewidth=1, label='C2RCC baseline')
-    ]
-    fig.legend(handles=legend_elements, loc='lower center', ncol=4, fontsize=FONT_BASE -2, bbox_to_anchor=(0.5, -0.05))
-
-    plt.suptitle(f'Residual Analysis - {model_name}', fontsize=FONT_BASE+5, fontweight='bold', y=1.02)
+    plt.suptitle(f'Residual Analysis - {model_name}', fontsize=13, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.savefig('figures/fig4_residual_analysis.png', dpi=300, bbox_inches='tight')
     plt.savefig('figures/fig4_residual_analysis.pdf', dpi=300, bbox_inches='tight')
@@ -677,7 +612,7 @@ def create_feature_importance(X_train, y_train, feature_names):
     ax1.tick_params(axis='x', labelsize=FONT_BASE - 3)
     ax1.tick_params(axis='y', labelsize=FONT_BASE - 2)
     ax1.set_ylabel('Feature Importance', fontsize=FONT_BASE)
-    ax1.set_title('(a) Top 10 Most Important Features', fontsize=FONT_BASE + 2, fontweight='bold')
+    ax1.set_title('(a) Top 10 Most Important Features', fontsize=FONT_BASE + 1, fontweight='bold')
     ax1.grid(True, alpha=0.3, axis='y')
 
     # Etiquetas de porcentaje encima de barras (porcentaje relativo a 1.0)
@@ -700,14 +635,14 @@ def create_feature_importance(X_train, y_train, feature_names):
     ax2.axhline(y=0.8, color='red', linestyle='--', alpha=0.6, label='80% cumulative')
     ax2.set_xlabel('Number of Features', fontsize=FONT_BASE)
     ax2.set_ylabel('Cumulative Importance', fontsize=FONT_BASE)
-    ax2.set_title('(b) Cumulative Feature Importance', fontsize=FONT_BASE + 2, fontweight='bold')
+    ax2.set_title('(b) Cumulative Feature Importance', fontsize=FONT_BASE + 1, fontweight='bold')
     ax2.set_xticks(range(1, len(top_imps) + 1))
     ax2.tick_params(axis='both', labelsize=FONT_BASE - 2)
     ax2.grid(True, alpha=0.3)
     ax2.legend(fontsize=FONT_BASE - 3)
     ax2.set_ylim(0, 1)
 
-    # plt.suptitle('Feature Importance Analysis', fontsize=FONT_BASE + 2, fontweight='bold', y=1.02)
+    plt.suptitle('Feature Importance Analysis', fontsize=FONT_BASE + 2, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.savefig('figures/fig5_feature_importance.png', dpi=300, bbox_inches='tight')
     plt.savefig('figures/fig5_feature_importance.pdf', dpi=300, bbox_inches='tight')
@@ -766,7 +701,7 @@ def create_loro_validation(X, y, groups):
             reservoir_names.append(groups[test_idx[0]])
     
     if FLIP_WIDE_LAYOUTS:
-        fig, axes = plt.subplots(2, 1, figsize=(9, 13))
+        fig, axes = plt.subplots(2, 1, figsize=(8, 12))
         ax1, ax2 = axes
     else:
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
@@ -777,10 +712,10 @@ def create_loro_validation(X, y, groups):
                label=f'Mean: {np.mean(scores):.1f} mg/m³')
     ax1.axvline(x=np.median(scores), color='green', linestyle='--', linewidth=2,
                label=f'Median: {np.median(scores):.1f} mg/m³')
-    ax1.set_xlabel('RMSE (mg/m³)', fontsize=FONT_BASE-2)
-    ax1.set_ylabel('Frequency', fontsize=FONT_BASE-2)
-    ax1.set_title('(a) LORO Cross-Validation RMSE Distribution', fontsize=FONT_BASE+2, fontweight='bold')
-    ax1.legend(fontsize=FONT_BASE-2)
+    ax1.set_xlabel('RMSE (mg/m³)', fontsize=10)
+    ax1.set_ylabel('Frequency', fontsize=10)
+    ax1.set_title('(a) LORO Cross-Validation RMSE Distribution', fontsize=11, fontweight='bold')
+    ax1.legend(fontsize=9)
     ax1.grid(True, alpha=0.3, axis='y')
     
     # Panel 2: Box plot con puntos
@@ -792,20 +727,22 @@ def create_loro_validation(X, y, groups):
     x = np.random.normal(1, 0.04, size=len(scores))
     ax2.scatter(x, scores, alpha=0.5, s=30, color='red')
     
-    ax2.set_ylabel('RMSE (mg/m³)', fontsize=FONT_BASE-2)
-    ax2.set_title('(b) LORO Performance Summary', fontsize=FONT_BASE+2, fontweight='bold')
+    ax2.set_ylabel('RMSE (mg/m³)', fontsize=10)
+    ax2.set_title('(b) LORO Performance Summary', fontsize=11, fontweight='bold')
     ax2.set_xticklabels(['All Reservoirs'])
     ax2.grid(True, alpha=0.3, axis='y')
     
     # Añadir estadísticas
     stats_text = f'Mean ± SD: {np.mean(scores):.1f} ± {np.std(scores):.1f} mg/m³\n'
-    stats_text += f'Min: {np.min(scores):.1f} mg/m³ '
+    stats_text += f'Min: {np.min(scores):.1f} mg/m³\n'
     stats_text += f'Max: {np.max(scores):.1f} mg/m³\n'
-    stats_text += f'Q1: {np.percentile(scores, 25):.1f} mg/m³ '
+    stats_text += f'Q1: {np.percentile(scores, 25):.1f} mg/m³\n'
     stats_text += f'Q3: {np.percentile(scores, 75):.1f} mg/m³'
-    ax2.text(1.04, -25, stats_text, fontsize=FONT_BASE - 3,
+    ax2.text(1.3, np.mean(scores), stats_text, fontsize=9,
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
+    plt.suptitle('Spatial Cross-Validation (Leave-One-Reservoir-Out)', 
+                fontsize=13, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.savefig('figures/fig6_loro_validation.png', dpi=300, bbox_inches='tight')
     plt.savefig('figures/fig6_loro_validation.pdf', dpi=300, bbox_inches='tight')
@@ -1032,17 +969,21 @@ def main(fig_number=None):
     
     # Cargar datos
     print("Loading data...")
-    df_clean = load_and_prepare_data(RESULTADOS)
+    df_clean = load_and_prepare_data('resultados.csv')
     
     # Variables base
     y = df_clean['Medicion'].values
     trophic_states = df_clean['Estado_Trofico']
     groups = df_clean['Embalse'].values
 
-    feature_names = ['C2RCC', 'C2X_r', 'C2XC_r', 'Mean_r', 'Median_r',
-                     'C2X_r*C2RCC', 'C2XC_r*C2RCC',
-                     'C2RCC_sq', 'sqrt_C2RCC',
-                     'C2XC_r/C2RCC']
+    # Preparar características extendidas (ligero coste)
+    df_clean['C2X_prod_C2RCC'] = df_clean['C2X'] * df_clean['C2RCC']
+    df_clean['C2XC_prod_C2RCC'] = df_clean['C2XC'] * df_clean['C2RCC']
+    df_clean['C2RCC_squared'] = df_clean['C2RCC']**2
+    feature_names = ['C2RCC', 'C2X', 'C2XC', 'log_C2X', 'log_C2XC',
+                     'C2X_C2RCC_ratio', 'C2XC_C2RCC_ratio',
+                     'C2X_prod_C2RCC', 'C2XC_prod_C2RCC',
+                     'C2RCC_squared']
     X_extended = df_clean[feature_names].values
 
     # Determinar si hace falta entrenar modelos (figs 2-7)
